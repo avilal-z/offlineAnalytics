@@ -1,0 +1,23 @@
+﻿{
+  "configurations": [
+    {
+      "name": "x64-Release",
+      "generator": "Ninja",
+      "configurationType": "RelWithDebInfo",
+      "buildRoot": "${projectDir}\\out\\build\\${name}",
+      "installRoot": "${projectDir}\\out\\install\\${name}",
+      "cmakeCommandArgs": "",
+      "buildCommandArgs": "-v",
+      "ctestCommandArgs": "",
+      "inheritEnvironments": [ "msvc_x64_x64" ],
+      "variables": [
+        {
+          "name": "Qt5MultimediaWidgets_DIR",
+          "value": "C:/vcpkg/installed/x64-windows/share/cmake/Qt5MultimediaWidgets",
+          "type": "PATH"
+        }
+      ],
+      "cmakeToolchain": "C:/vcpkg/scripts/buildsystems/vcpkg.cmake"
+    }
+  ]
+}
