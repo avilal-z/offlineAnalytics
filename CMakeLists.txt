@@ -133,6 +133,22 @@ target_link_libraries (rtrackSRE
 	gpuKNN
 )
 
+add_executable(s2m 
+	"include/helpers.hpp" "rtrackSRE/rtrackSRE.cpp"
+	"Libraries/z/gpuKNN/zeta_cuda_index.h" "Libraries/z/gpuKNN/zeta-gpuICP.hpp"
+	"Libraries/z/zeta-ransac.h" "Libraries/z/zeta-features.hpp" "Libraries/z/ZetaAligner.h"
+
+)
+
+target_link_libraries (s2m 
+	"${CMAKE_CURRENT_SOURCE_DIR}\\Libraries\\z\\zeta.lib"
+	${VTK_LIBRARIES} 
+	${PCL_LIBRARIES}
+	"C://Program Files//NVIDIA GPU Computing Toolkit//CUDA//v10.1//lib//x64//cuda.lib"
+	sacgpu
+	gpuKNN
+)
+
 
 install(TARGETS recorder
         RUNTIME DESTINATION bin)
