@@ -1,5 +1,5 @@
 #include "include/helpers.hpp"
-
+#include <limits>
 void txt_reader(std::string file_path, zeta::PointCloudPtr segmented_cloud) {
 	//read csv add in points to cloud
 	//skip first 2 rows 
@@ -66,7 +66,7 @@ void transformClouds(std::string root, std::string head_path, std::vector<uint64
 
 		//run rtrack
 		auto t1 = timeSince();
-		Eigen::Matrix4f icp_transform = gpuICPAlign<zeta::Point>(current_cloud, head_cloud, 100, .003, 0, 0, 1, alignedFinal, distances, out_indices);
+		Eigen::Matrix4f icp_transform = gpuICPAlign<zeta::Point>(current_cloud, head_cloud, 100, .003, 0, 0, 1, alignedFinal);
 		auto t2 = timeSince();
 		std:cout << "rt time: " << t2 - t1 << std::endl;
 
@@ -86,7 +86,8 @@ void transformClouds(std::string root, std::string head_path, std::vector<uint64
 
 }
 
-void writeSRE(std::string filename, std::vector<float> distances, std::vector<int> out_indices, zeta::PointCloudPtr current_cloud ) {
+
+void writeSRE(std::string filename, std::vector<float> distances, std::vector<int> out_indices, zeta::PointCloudColorAPtr current_cloud, Eigen::MatrixXf newBox) {
 
 	//remove outliers from distance cloud and calculate mean 
 	std::vector<float> pruned_dist = {};
@@ -118,94 +119,141 @@ void writeSRE(std::string filename, std::vector<float> distances, std::vector<in
 	//write SRE
 	std::ofstream outfile;
 	outfile.open(filename);
+	std::cout << "std max" << std::to_string(mean_dist + 2 * std_dev) << std::endl;
+	std::cout << "std min" << std::to_string(mean_dist - 2 * std_dev) << std::endl;
 	for (int i = 0; i < pruned_dist.size(); i++) {
-		if(pruned_dist[i] > mean_dist + 2 *std_dev || pruned_dist[i] < mean_dist - 2 * std_dev){
-			std::cout << "dist" << pruned_dist[i] << std::endl;
-			continue;
-		}
-		else {
-			outfile << current_cloud->points[pruned_indices[i]].x << "," <<
-					   current_cloud->points[pruned_indices[i]].y << "," <<
-					   current_cloud->points[pruned_indices[i]].z << "," <<
-					   distances[i] << std::endl;
-		}
+			float x = current_cloud->points[pruned_indices[i]].x;
+			float y = current_cloud->points[pruned_indices[i]].y;
+			float z = current_cloud->points[pruned_indices[i]].z;					
+
+			if (x > newBox(0, 0) && x < newBox(1, 0) && y > newBox(0, 1) && y < newBox(1, 1) && z > newBox(0, 2) && z < newBox(1, 2)) {
+				outfile << x << "," << y << "," << z << "," << sqrt(pruned_dist[pruned_indices[i]]) << std::endl;
+			}
 	}
 	outfile.close();
 }
 
-void generateSRE(std::string root, std::string head_path, std::vector<uint64_t> time_stamps, zeta::PointCloudPtr head_cloud, zeta::NormalCloudPtr head_normals) {
 
-	load_head_cloud(head_path, head_cloud, head_normals);
+void writeHeat(std::string filename, zeta::PointCloudColorAPtr current_cloud) {
+	std::ofstream outfile;
+	outfile.open(filename);
+	for (int i = 0; i < current_cloud->size(); i++) {
+		float x = current_cloud->points[i].x;
+		float y = current_cloud->points[i].y;
+		float z = current_cloud->points[i].z;
+		float r = current_cloud->points[i].r;
+		float g = current_cloud->points[i].g;
+		float b = current_cloud->points[i].b;
 
-	//declare arrayy of clouds to save 
-	zeta::PointCloudPtr current_cloud(new zeta::PointCloud);
-	zeta::PointCloudPtr alignedFinal(new zeta::PointCloud);
+		outfile << x << "," << y << "," << z << "," << r << "," << g << "," << b << std::endl;
+	}
+	outfile.close();
+}
 
-	std::string cloud_file_name = root + "/" + std::to_string(time_stamps[0]) + ".txt";
-	std::cout << cloud_file_name << std::endl;
-	zeta::io::loadCloudFile(cloud_file_name, current_cloud);
 
-	Eigen::Matrix4f initial_alignment = full_align_txt(current_cloud, head_cloud, head_normals);
 
-	//begin rtrack
-	Eigen::Matrix4f previous_transform = initial_alignment.inverse();
+void generateHeatMap() {
+	std::string recording_dir = "D:/CadaverStudyDay3/Rtrack/Head1/Head1_Hole4_Pitch";
+	std::string recording_alignment_file = recording_dir + "/mod1/rTrackResultsmod0.csv";
+	std::string head_path = "D:/CadaverStudyDay3/Head-1-Post.obj";
+	int alignment_col = 14;
+	int speed = 1;
+	Eigen::IOFormat HeavyFmt(Eigen::FullPrecision, 0, ", ", ";\n", "[", "]", "[", "]");
 
-	for (int i = 0; i < time_stamps.size(); ++i) {
-		cloud_file_name = root + "/" + std::to_string(time_stamps[i]) + ".txt";
-		std::cout << cloud_file_name << std::endl;
+	//load timestamps and poses
+	std::vector<uint64_t> time_stamps;
+	std::vector<Eigen::Matrix4f> alignments;
+	alignment_reader(recording_alignment_file, time_stamps, alignments, alignment_col);
+	auto p = sort_permutation(time_stamps,
+		[](uint64_t const& a, uint64_t const& b) {return a < b; });
+	time_stamps = apply_permutation(time_stamps, p);
+	alignments = apply_permutation(alignments, p);
 
-		zeta::io::loadCloudFile(cloud_file_name, current_cloud);
-		pcl::transformPointCloud(*current_cloud, *current_cloud, previous_transform);
-		std::vector<float> distances = {};
-		std::vector<int> out_indices = {};
+	int t_size = time_stamps.size();
 
-		//run rtrack
-		auto t1 = timeSince();
-		Eigen::Matrix4f icp_transform = gpuICPAlign<zeta::Point>(current_cloud, head_cloud, 100, .003, 0, 0, 1, alignedFinal, distances, out_indices);
-		auto t2 = timeSince();
-		std:cout << "rt time: " << t2 - t1 << std::endl;
-		pcl::transformPointCloud(*current_cloud, *current_cloud, icp_transform.inverse());
-
-		//save cloud with distances 
-		previous_transform = icp_transform.inverse() * previous_transform;
-		std::ofstream outfile;
-		outfile.open(root + "/alignment.csv");
-		outfile << previous_transform(0, 0) << ">" << previous_transform(0, 1) << ">" << previous_transform(0, 2) << ">" << previous_transform(0, 3) << "|"
-				<< previous_transform(1, 0) << ">" << previous_transform(1, 1) << ">" << previous_transform(1, 2) << ">" << previous_transform(1, 3) << "|"
-				<< previous_transform(2, 0) << ">" << previous_transform(2, 1) << ">" << previous_transform(2, 2) << ">" << previous_transform(2, 3) << "|"
-				<< previous_transform(3, 0) << ">" << previous_transform(3, 1) << ">" << previous_transform(3, 2) << ">" << previous_transform(3, 3) << ",";
-		outfile.close();
-		std::cout << "alignment printed to:" << root << std::endl;
-		std::string filename = root + "/out/" + std::to_string(time_stamps[i]) + ".csv";
-
-		writeSRE(filename, distances, out_indices, current_cloud);
-
+	//create directory for heatmaps files
+	std::string directory_name = recording_dir + "/icpSREtest/";
+	boost::filesystem::path dir(directory_name);
+	if (!(boost::filesystem::exists(dir))) {
+		std::cout << "Doesn't Exist" << std::endl;
+		if (boost::filesystem::create_directory(dir))
+			std::cout << "....Successfully Created !" << std::endl;
 	}
 
+	//Load Head
+	zeta::PointCloudPtr head_cloud(new zeta::PointCloud);
+	zeta::NormalCloudPtr head_normals(new zeta::NormalCloud);
+	load_head_cloud(head_path, head_cloud, head_normals);
+
+	//create bounding box for head
+	Eigen::MatrixXf box(4, 8);
+	box = FindBoundingBox(head_cloud);
+	zeta::PointCloudPtr current_cloud(new zeta::PointCloud);
+
+
+
+	std::vector<double> mean_sre = {};
+	int counter = 0;
+	for (int i = 0; i < t_size; i++) {
+		if (i % speed == 0) {
+			Eigen::MatrixXf newBox(2, 3);
+			std::string cloud_filename = recording_dir + "/" + std::to_string(time_stamps[i]) + ".pcd";
+			zeta::io::loadCloudFile(cloud_filename, current_cloud); //load cloud, transform and save 
+			pcl::transformPointCloud(*current_cloud, *current_cloud, alignments[i].inverse());   //transform cloud by alignment
+			zeta::PointCloudPtr alignedFinal(new zeta::PointCloud);
+			std::vector<float> distances = {};
+			std::vector<int> out_indices = {};
+			Eigen::Matrix4f initial_alignment = gpuICPAlign<zeta::Point>(current_cloud, head_cloud, 1, .003, 0, 0, 1, alignedFinal);
+			
+			auto t1 = timeSince();
+			//apply bounding box
+			newBox = findBounds(box);
+			zeta::PointCloudColorAPtr bound_cloud(new zeta::PointCloudColorA);
+			bindCloud<zeta::PointColorA>(current_cloud, bound_cloud, newBox);
+			std::string filename = directory_name + std::to_string(time_stamps[i]) + ".txt";
+			//findDist<zeta::PointColorA>(head_cloud, bound_cloud, 1, 0.03, distances, out_indices);
+			//colorHeatMap(bound_cloud, distances, out_indices);
+			//writeSRE(filename, distances, out_indices, bound_cloud, newBox);
+		
+			distances = createHeatMap(bound_cloud, head_cloud, 0.05);
+			writeHeat(filename, bound_cloud);
+			//writeSRE(filename, distances, out_indices, bound_cloud, newBox);
+
+			return;
+
+			if (i == 10) {
+
+				return;
+			}
+			counter++;
+		}
+	}
 
 }
 
 void main() {
-	//load data 
-	std::vector<uint64_t> time_stamps;
-	std::vector<Eigen::Matrix4f> tool_pos;
-	std::string root = "D:/CadaverStudyDay2/Head1/head1_pitch/sreTest";
-	std::string head_path = "C:/Users/ZImaging/Desktop/data/Head-1/Head-1_AlignmentSurface.obj";
+	////load data 
+	//std::vector<uint64_t> time_stamps;
+	//std::vector<Eigen::Matrix4f> tool_pos;
+	//std::string root = "D:/CadaverStudyDay2/Head1/head1_pitch/sreTest";
+	//std::string head_path = "C:/Users/ZImaging/Desktop/data/Head-1/Head-1_AlignmentSurface.obj";
 
-	//Gather timestamps and tool positions
-	csv_reader(root + "/positions.csv", time_stamps, tool_pos);
+	////Gather timestamps and tool positions
+	//csv_reader(root + "/positions.csv", time_stamps, tool_pos);
 
-	//sort in chronological order
-	auto p = sort_permutation(time_stamps,
-		[](uint64_t const& a, uint64_t const& b) {return a < b; });
-	time_stamps = apply_permutation(time_stamps, p);
-	tool_pos = apply_permutation(tool_pos, p);
+	////sort in chronological order
+	//auto p = sort_permutation(time_stamps,
+	//	[](uint64_t const& a, uint64_t const& b) {return a < b; });
+	//time_stamps = apply_permutation(time_stamps, p);
+	//tool_pos = apply_permutation(tool_pos, p);
 
-	//load head obj
-	zeta::PointCloudPtr head_cloud(new zeta::PointCloud);
-	zeta::NormalCloudPtr head_normals(new zeta::NormalCloud);
+	////load head obj
+	//zeta::PointCloudPtr head_cloud(new zeta::PointCloud);
+	//zeta::NormalCloudPtr head_normals(new zeta::NormalCloud);
 
-	//transformClouds(root, head_path, time_stamps, head_cloud, head_normals);
-	generateSRE(root, head_path, time_stamps, head_cloud, head_normals);
+	////transformClouds(root, head_path, time_stamps, head_cloud, head_normals);
+	//generateSRE(root, head_path, time_stamps, head_cloud, head_normals);
+
+	generateHeatMap();
 }
 

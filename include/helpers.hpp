@@ -8,19 +8,39 @@
 #include "Libraries/z/gpuKNN/zeta_cuda_index.h"
 #include "Libraries/z/gpuKNN/zeta-gpuICP.hpp"
 
+Eigen::Vector3f rottoeuler(Eigen::Matrix4f R)
+{
+	float sy = sqrt(R(0, 0) * R(0, 0) + R(1, 0) * R(1, 0));
+
+	bool singular = sy < 1e-6; // If
+
+	float x, y, z;
+	if (!singular)
+	{
+		x = atan2(R(2, 1), R(2, 2));
+		y = atan2(-R(2, 0), sy);
+		z = atan2(R(1, 0), R(0, 0));
+	}
+	else
+	{
+		x = atan2(-R(1, 2), R(1, 1));
+		y = atan2(-R(2, 0), sy);
+		z = 0;
+	}
+	return 180 * Eigen::Vector3f(x, y, z) / 3.14159265;
+}
+
 std::string stringify(Eigen::Matrix4f a) {
 	std::string mat_str = "";
 	for (int i = 0; i < 4; i++) {
 		for (int j = 0; j < 4; j++) {
 		
-			mat_str =+ a(i, j);
+			mat_str += std::to_string(a(i, j)) + ">";
 		
 		}
-		mat_str += "\n";
+		mat_str += "|";
 	}
-
 	return mat_str;
-
 }
 
 Eigen::Matrix4f full_align_txt(zeta::PointCloudPtr segmented_cloud, zeta::PointCloudPtr head_cloud, zeta::NormalCloudPtr head_normals) {
@@ -153,6 +173,48 @@ void csv_reader(std::string file_path, std::vector<uint64_t>&time_stamp, std::ve
 	}
 
 }
+
+
+
+void alignment_reader(std::string file_path, std::vector<uint64_t>& time_stamp, std::vector<Eigen::Matrix4f>& alignments, int alignment_col) {
+	//add the rest of the points 
+	std::ifstream str(file_path);
+	std::string                line;
+	int rows = -1;
+
+	while (std::getline(str, line)) {
+		std::vector<std::string>   result;
+		std::stringstream          lineStream(line);
+		std::string                cell;
+		int linecount = 0;
+		int col_num = 0;
+		//skip first  rows 
+		if (rows != -1) {
+			while (std::getline(lineStream, cell, ','))
+			{
+				//iterate over columns
+				result.push_back(cell);
+				//save timestamp
+				if (col_num == 0) {
+					time_stamp.push_back(std::stoull(result[col_num]));
+				}
+				//save position
+				else if (col_num == alignment_col) {
+					Eigen::Matrix4f a = matrixify(result[col_num]);
+					alignments.push_back(a);
+				}
+				col_num++;
+			}
+
+		}
+
+		rows++;
+	}
+
+}
+
+
+
 
 template <typename T, typename Compare>
 std::vector<std::size_t> sort_permutation(
